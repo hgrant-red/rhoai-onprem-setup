@@ -36,8 +36,21 @@ wait_for_crd() {
 wait_for_deployment() {
     local namespace=$1
     local deployment_name=$2
-    echo "--> Waiting for deployment '$deployment_name' in namespace '$namespace'..."
-    oc wait deployment -n "$namespace" "$deployment_name" --for condition=Available=True --timeout=300s
+    local timeout=300 # 5-minute timeout
+
+    echo "--> Waiting for deployment '$deployment_name' in namespace '$namespace' to be created..."
+    local start_time=$(date +%s)
+    until oc get deployment "$deployment_name" -n "$namespace" &> /dev/null; do
+      local current_time=$(date +%s)
+      if (( current_time - start_time > timeout )); then
+        echo "ERROR: Timed out waiting for deployment '$deployment_name' to be created."
+        exit 1
+      fi
+      sleep 5
+    done
+
+    echo "--> Deployment '$deployment_name' found. Waiting for it to become available..."
+    oc wait deployment -n "$namespace" "$deployment_name" --for condition=Available=True --timeout="${timeout}s"
     echo "--- ✅ Deployment '$deployment_name' is ready."
 }
 
@@ -57,12 +70,12 @@ echo "--- ✅ NFD Operator setup is complete."
 echo "--- STEP 2: Applying Service Mesh, Serverless, and Authorino Operators..."
 oc apply -f /manifests/operators/05-service-mesh-operator.yaml
 oc apply -f /manifests/operators/06-serverless-operator.yaml
-# oc apply -f /manifests/operators/30-authorino-operator.yaml
+oc apply -f /manifests/operators/30-authorino-operator.yaml
 
 echo "--- Waiting for core dependency operators to be ready..."
 wait_for_crd servicemeshcontrolplanes.maistra.io
 wait_for_crd knativeservings.operator.knative.dev
-# wait_for_crd authorinos.authorino.kuadrant.io
+wait_for_crd authorinos.authorino.kuadrant.io
 echo "--- ✅ Core dependency operators are ready."
 
 

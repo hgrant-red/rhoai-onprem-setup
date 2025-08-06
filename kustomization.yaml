@@ -16,7 +16,7 @@ configMapGenerator:
   - operators/06-serverless-operator.yaml
   - operators/10-nfd-operator.yaml
   # - operators/20-gpu-operator.yaml # This remains commented out for the AWS test
-  # - operators/30-authorino-operator.yaml
+  - operators/30-authorino-operator.yaml
   - operators/40-rhoai-operator.yaml
 - name: config-manifests-cm
   namespace: redhat-ods-operator
