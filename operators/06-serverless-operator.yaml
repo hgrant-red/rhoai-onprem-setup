@@ -8,7 +8,7 @@ kind: OperatorGroup
 metadata:
   name: serverless-operators
   namespace: openshift-serverless
-spec: {}
+spec: {} # <-- FIX: An empty spec allows for a supported InstallMode
 ---
 apiVersion: operators.coreos.com/v1alpha1
 kind: Subscription

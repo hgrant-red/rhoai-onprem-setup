@@ -8,9 +8,7 @@ kind: OperatorGroup
 metadata:
   name: authorino-operator-group
   namespace: authorino-operator
-spec:
-  targetNamespaces:
-  - authorino-operator
+spec: {} # <-- FIX: An empty spec allows for a supported InstallMode
 ---
 apiVersion: operators.coreos.com/v1alpha1
 kind: Subscription

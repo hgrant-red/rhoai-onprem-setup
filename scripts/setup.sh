@@ -1,73 +1,116 @@
 #!/bin/bash
+# This script automates the installation of OpenShift AI and its dependencies.
+# It is designed to be run as an in-cluster Job.
+
 set -eo pipefail
 
-echo "--- STEP 1: Applying NFD Operator..."
+# ===================================================================================
+# --- HELPER FUNCTIONS ---
+# ===================================================================================
 
-echo "STEP 1: Installing NFD Operator..."
-oc apply -f operators/10-nfd-operator.yaml
-echo "INFO: Pausing for 60 seconds to allow OLM to process the request..."
-sleep 60
+# A robust function to wait for a CRD to exist and then become established.
+# Usage: wait_for_crd <crd_name>
+# Example: wait_for_crd servicemeshcontrolplanes.maistra.io
+wait_for_crd() {
+  local crd_name=$1
+  local timeout=300 # 5-minute timeout
 
-oc apply -f /operators/10-nfd-operator.yaml
-oc wait deployment -n openshift-nfd nfd-controller-manager --for condition=Available=True --timeout=300s
-oc apply -f /configs/10-nfd-instance.yaml
-echo "--- ✅ NFD Operator is ready."
+  echo "--> Waiting for CRD '$crd_name' to be created..."
+  local start_time=$(date +%s)
+  until oc get crd "$crd_name" &> /dev/null; do
+    local current_time=$(date +%s)
+    if (( current_time - start_time > timeout )); then
+      echo "ERROR: Timed out waiting for CRD '$crd_name' to be created."
+      exit 1
+    fi
+    sleep 5
+  done
 
-echo "--- STEP 2: Applying Service Mesh & Serverless..."
-oc apply -f /operators/05-service-mesh-operator.yaml
-oc apply -f /operators/06-serverless-operator.yaml
-echo "--- Waiting for dependencies to be ready..."
-oc wait --for=condition=established crd/servicemeshcontrolplanes.maistra.io --timeout=300s
-oc wait --for=condition=established crd/knativeservings.operator.knative.dev --timeout=300s
-echo "--- ✅ Dependencies are ready."
+  echo "--> CRD '$crd_name' found. Waiting for it to become established..."
+  oc wait --for=condition=Established "crd/$crd_name" --timeout="${timeout}s"
+  echo "--- ✅ CRD '$crd_name' is ready."
+}
+
+# Waits for a specific deployment to become available in a namespace.
+# Usage: wait_for_deployment <namespace> <deployment_name>
+wait_for_deployment() {
+    local namespace=$1
+    local deployment_name=$2
+    echo "--> Waiting for deployment '$deployment_name' in namespace '$namespace'..."
+    oc wait deployment -n "$namespace" "$deployment_name" --for condition=Available=True --timeout=300s
+    echo "--- ✅ Deployment '$deployment_name' is ready."
+}
+
 
 # ===================================================================================
-# --- STEP 3: Applying NVIDIA GPU Operator (COMMENTED OUT FOR AWS TEST) ---
+# --- MAIN EXECUTION ---
+# ===================================================================================
+
+echo "--- STEP 1: Applying NFD Operator..."
+oc apply -f /manifests/operators/10-nfd-operator.yaml
+wait_for_crd nodefeaturediscoveries.nfd.openshift.io
+wait_for_deployment openshift-nfd nfd-controller-manager
+oc apply -f /manifests/configs/10-nfd-instance.yaml
+echo "--- ✅ NFD Operator setup is complete."
+
+
+echo "--- STEP 2: Applying Service Mesh, Serverless, and Authorino Operators..."
+oc apply -f /manifests/operators/05-service-mesh-operator.yaml
+oc apply -f /manifests/operators/06-serverless-operator.yaml
+# oc apply -f /manifests/operators/30-authorino-operator.yaml
+
+echo "--- Waiting for core dependency operators to be ready..."
+wait_for_crd servicemeshcontrolplanes.maistra.io
+wait_for_crd knativeservings.operator.knative.dev
+# wait_for_crd authorinos.authorino.kuadrant.io
+echo "--- ✅ Core dependency operators are ready."
+
+
+# ===================================================================================
+# --- STEP 3: Applying NVIDIA GPU Operator (COMMENTED OUT) ---
+# This block is ready for the on-premises environment.
 # ===================================================================================
 # echo "--- STEP 3: Applying NVIDIA GPU Operator..."
-# oc apply -f /operators/20-gpu-operator.yaml
-#
-# echo "--- Waiting for NVIDIA GPU Operator to install..."
-# CSV_NAME_GPU=""
-# until [ ! -z "$CSV_NAME_GPU" ]; do
-#   CSV_NAME_GPU=$(oc get sub gpu-operator-certified -n nvidia-gpu-operator -o jsonpath='{.status.installedCSV}' 2>/dev/null || echo "")
-#   echo "Waiting for NVIDIA GPU Operator installation plan..."
-#   sleep 10
-# done
-# oc wait csv $CSV_NAME_GPU -n nvidia-gpu-operator --for condition=Succeeded --timeout=300s
-# echo "--- ✅ NVIDIA GPU Operator is running."
+# oc apply -f /manifests/operators/20-gpu-operator.yaml
+# wait_for_crd clusterpolicies.nvidia.com
+# wait_for_deployment nvidia-gpu-operator gpu-operator
 #
 # echo "--- Applying GPU ClusterPolicy to begin driver installation..."
-# oc get csv -n nvidia-gpu-operator $CSV_NAME_GPU -ojsonpath='{.metadata.annotations.alm-examples}' | jq '.[0]' > /tmp/20-gpu-clusterpolicy.yaml
-# oc apply -f /tmp/20-gpu-clusterpolicy.yaml
+# oc apply -f /manifests/configs/20-gpu-clusterpolicy.yaml
 #
-# echo "--- WAITING FOR NVIDIA DRIVERS TO DEPLOY (This can take 10-20 minutes)..."
-# until oc wait pod -n nvidia-gpu-operator -l openshift.driver-toolkit --for condition=Ready=True --timeout=600s 2>/dev/null; do
-#   echo "Driver pods not ready yet. Retrying in 30 seconds..."
+# echo "--- WAITING FOR NVIDIA DRIVERS TO DEPLOY (This can take over 15 minutes)..."
+# until oc get clusterpolicy/gpu-cluster-policy -o jsonpath='{.status.state}' | grep -q "ready"; do
+#   echo "Driver state is not 'ready' yet. Checking again in 30 seconds..."
 #   sleep 30
 # done
 # echo "--- ✅ NVIDIA GPU drivers are fully deployed and ready."
 # ===================================================================================
 
-echo "--- STEP 4: Applying Authorino & RHOAI Operators..."
-oc apply -f /operators/30-authorino-operator.yaml
-oc apply -f /operators/40-rhoai-operator.yaml
 
-echo "--- Waiting for RHOAI Operator to be ready..."
-oc wait --for=condition=established crd/datascienceclusters.datasciencecluster.opendatahub.io --timeout=300s
+echo "--- STEP 4: Applying Red Hat OpenShift AI Operator..."
+oc apply -f /manifests/operators/40-rhoai-operator.yaml
+wait_for_crd datascienceclusters.datasciencecluster.opendatahub.io
 echo "--- ✅ RHOAI Operator is ready."
 
-echo "--- STEP 5: Applying DataScienceCluster resource..."
-until oc get ns redhat-ods-applications 2>/dev/null; do
-  echo "Waiting for 'redhat-ods-applications' namespace to be created..."
+
+echo "--- STEP 5: Applying DataScienceCluster Resource..."
+echo "--> Waiting for the 'redhat-ods-applications' namespace to be created by the operator..."
+until oc get ns redhat-ods-applications &> /dev/null; do
+  echo "Still waiting for 'redhat-ods-applications' namespace..."
   sleep 10
 done
-oc apply -f /configs/30-datasciencecluster.yaml
+oc apply -f /manifests/configs/30-datasciencecluster.yaml
 
-echo "--- Waiting for DataScienceCluster to be ready..."
+echo "--> Waiting for the DataScienceCluster 'default-dsc' to become ready (This may take several minutes)..."
 oc wait datasciencecluster default-dsc -n redhat-ods-applications --for condition=Ready --timeout=900s
+echo "--- ✅ DataScienceCluster is ready."
+
 
 echo "--- STEP 6: Applying Dashboard Customizations..."
 oc patch -n redhat-ods-applications OdhDashboardConfig odh-dashboard-config --type=merge -p '{"spec":{"dashboardConfig":{"disableModelCatalog":false,"disableHardwareProfiles":false}}}'
+echo "--- ✅ Dashboard customizations applied."
 
-echo "--- ✅ DEPLOYMENT COMPLETE ---"
+
+echo ""
+echo "🚀🚀🚀 DEPLOYMENT COMPLETE 🚀🚀🚀"
+echo "Red Hat OpenShift AI has been successfully installed."

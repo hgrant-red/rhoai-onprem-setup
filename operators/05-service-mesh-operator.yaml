@@ -1,11 +1,11 @@
-# Creates the namespace for the Service Mesh components
+# Creates the namespace for the Service Mesh components (the control plane)
 apiVersion: v1
 kind: Namespace
 metadata:
   name: openshift-service-mesh
 ---
 # Subscribes to the Service Mesh Operator
-# It will be installed in the shared 'openshift-operators' namespace
+# It will be installed in the shared 'openshift-operators' namespace to act globally.
 apiVersion: operators.coreos.com/v1alpha1
 kind: Subscription
 metadata:
