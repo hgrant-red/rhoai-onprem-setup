@@ -1,0 +1,27 @@
+# Creates the dedicated namespace for the NVIDIA GPU Operator
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: nvidia-gpu-operator
+---
+# This OperatorGroup is required for OLM to create an InstallPlan
+apiVersion: operators.coreos.com/v1
+kind: OperatorGroup
+metadata:
+  name: nvidia-gpu-operator-group
+  namespace: nvidia-gpu-operator
+spec:
+  targetNamespaces:
+  - nvidia-gpu-operator
+---
+# Subscribes to the NVIDIA GPU Operator from the certified-operators catalog
+apiVersion: operators.coreos.com/v1alpha1
+kind: Subscription
+metadata:
+  name: gpu-operator-certified
+  namespace: nvidia-gpu-operator
+spec:
+  channel: "stable" # Using stable channel for broad compatibility
+  name: gpu-operator-certified
+  source: certified-operators
+  sourceNamespace: openshift-marketplace

@@ -1,0 +1,24 @@
+apiVersion: datasciencecluster.opendatahub.io/v1
+kind: DataScienceCluster
+metadata:
+  name: default-dsc
+  # This CR will be created in the RHOAI applications namespace
+  namespace: redhat-ods-applications
+spec:
+  components:
+    dashboard:
+      managementState: Managed
+    workbenches:
+      managementState: Managed
+    modelregistry:
+      managementState: Managed
+    codeflare:
+      managementState: Removed
+    kserve:
+      managementState: Removed
+    kueue:
+      managementState: Removed
+    datasciencepipelines:
+      managementState: Removed
+    trainingoperator:
+      managementState: Removed

@@ -1,0 +1,26 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+- installer-job.yaml
+
+configMapGenerator:
+- name: installer-script-cm
+  namespace: redhat-ods-operator
+  files:
+  - scripts/setup.sh
+- name: operator-manifests-cm
+  namespace: redhat-ods-operator
+  files:
+  - operators/05-service-mesh-operator.yaml
+  - operators/06-serverless-operator.yaml
+  - operators/10-nfd-operator.yaml
+  # - operators/20-gpu-operator.yaml # This remains commented out for the AWS test
+  - operators/30-authorino-operator.yaml
+  - operators/40-rhoai-operator.yaml
+- name: config-manifests-cm
+  namespace: redhat-ods-operator
+  files:
+  - configs/10-nfd-instance.yaml
+  # - configs/20-gpu-clusterpolicy.yaml # This remains commented out for the AWS test
+  - configs/30-datasciencecluster.yaml
