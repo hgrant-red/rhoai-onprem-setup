@@ -5,53 +5,75 @@
 set -eo pipefail
 
 # ===================================================================================
-# --- HELPER FUNCTIONS ---
+# --- HELPER FUNCTION ---
 # ===================================================================================
 
-# A robust function to wait for a CRD to exist and then become established.
-# Usage: wait_for_crd <crd_name>
-# Example: wait_for_crd servicemeshcontrolplanes.maistra.io
-wait_for_crd() {
-  local crd_name=$1
-  local timeout=300 # 5-minute timeout
+# A robust, data-driven function to wait for an operator to install and become ready.
+# It discovers the deployment names directly from the operator's ClusterServiceVersion (CSV).
+# Usage: wait_for_operator <namespace> <subscription_name>
+wait_for_operator() {
+  local namespace=$1
+  local subscription_name=$2
+  local timeout=900 # 15-minute timeout for resilience on slow clusters
 
-  echo "--> Waiting for CRD '$crd_name' to be created..."
+  echo "--> Waiting for Subscription '$subscription_name' in namespace '$namespace' to be processed by OLM..."
+  
+  # 1. Wait for the Subscription to report the name of the CSV it is installing
   local start_time=$(date +%s)
-  until oc get crd "$crd_name" &> /dev/null; do
+  local csv_name=""
+  until [[ -n "$csv_name" ]]; do
+    csv_name=$(oc get subscription "$subscription_name" -n "$namespace" -o jsonpath='{.status.installedCSV}' 2>/dev/null || echo "")
+    if [[ -n "$csv_name" ]]; then
+      if ! oc get csv "$csv_name" -n "$namespace" &> /dev/null; then
+        csv_name="" # CSV is not created yet, keep waiting
+      fi
+    fi
     local current_time=$(date +%s)
     if (( current_time - start_time > timeout )); then
-      echo "ERROR: Timed out waiting for CRD '$crd_name' to be created."
+      echo "ERROR: Timed out waiting for Subscription '$subscription_name' to create a CSV."
+      oc get subscription "$subscription_name" -n "$namespace" -o yaml
       exit 1
     fi
     sleep 5
   done
 
-  echo "--> CRD '$crd_name' found. Waiting for it to become established..."
-  oc wait --for=condition=Established "crd/$crd_name" --timeout="${timeout}s"
-  echo "--- ✅ CRD '$crd_name' is ready."
-}
+  echo "--> Found CSV: '$csv_name'. Waiting for it to succeed..."
 
-# Waits for a specific deployment to become available in a namespace.
-# Usage: wait_for_deployment <namespace> <deployment_name>
-wait_for_deployment() {
-    local namespace=$1
-    local deployment_name=$2
-    local timeout=300 # 5-minute timeout
+  # 2. Use a robust 'until' loop to poll for the 'Succeeded' phase. This avoids the 'oc wait' bug.
+  start_time=$(date +%s)
+  local current_phase=""
+  until [[ "$current_phase" == "Succeeded" ]]; do
+    current_phase=$(oc get csv "$csv_name" -n "$namespace" -o jsonpath='{.status.phase}' 2>/dev/null || echo "Installing")
+    echo "--> Current phase for '$csv_name' is '$current_phase'..."
+    local current_time=$(date +%s)
+    if (( current_time - start_time > timeout )); then
+      echo "ERROR: Timed out waiting for CSV '$csv_name' to reach 'Succeeded' phase."
+      oc get csv "$csv_name" -n "$namespace" -o yaml
+      exit 1
+    fi
+    sleep 10
+  done
+  
+  echo "--> CSV '$csv_name' is ready. Discovering its deployments..."
 
-    echo "--> Waiting for deployment '$deployment_name' in namespace '$namespace' to be created..."
-    local start_time=$(date +%s)
-    until oc get deployment "$deployment_name" -n "$namespace" &> /dev/null; do
-      local current_time=$(date +%s)
-      if (( current_time - start_time > timeout )); then
-        echo "ERROR: Timed out waiting for deployment '$deployment_name' to be created."
-        exit 1
-      fi
-      sleep 5
-    done
+  # 3. Inspect the CSV to get the names of the deployments it creates
+  local deployment_names
+  deployment_names=$(oc get csv "$csv_name" -n "$namespace" -o jsonpath='{.spec.install.spec.deployments[*].name}')
+  
+  if [ -z "$deployment_names" ]; then
+    echo "--- ✅ Operator '$subscription_name' has no deployments to wait for. Continuing. ---"
+    return
+  fi
+  
+  echo "--> Found deployments to wait for: $deployment_names"
 
-    echo "--> Deployment '$deployment_name' found. Waiting for it to become available..."
+  # 4. Loop through the discovered deployment names and wait for each one
+  for deployment_name in $deployment_names; do
+    echo "--> Waiting for deployment '$deployment_name' to become available..."
     oc wait deployment -n "$namespace" "$deployment_name" --for condition=Available=True --timeout="${timeout}s"
-    echo "--- ✅ Deployment '$deployment_name' is ready."
+  done
+  
+  echo "--- ✅ Operator '$subscription_name' and all its deployments are ready."
 }
 
 
@@ -61,52 +83,46 @@ wait_for_deployment() {
 
 echo "--- STEP 1: Applying NFD Operator..."
 oc apply -f /manifests/operators/10-nfd-operator.yaml
-wait_for_crd nodefeaturediscoveries.nfd.openshift.io
-wait_for_deployment openshift-nfd nfd-controller-manager
+wait_for_operator openshift-nfd nfd
 oc apply -f /manifests/configs/10-nfd-instance.yaml
 echo "--- ✅ NFD Operator setup is complete."
 
 
-echo "--- STEP 2: Applying Service Mesh, Serverless, and Authorino Operators..."
+echo "--- STEP 2: Applying Service Mesh Operator..."
 oc apply -f /manifests/operators/05-service-mesh-operator.yaml
+wait_for_operator openshift-operators servicemeshoperator
+
+
+echo "--- STEP 3: Applying Serverless Operator..."
 oc apply -f /manifests/operators/06-serverless-operator.yaml
+wait_for_operator openshift-serverless serverless-operator
+
+
+echo "--- STEP 4: Applying Authorino Operator..."
 oc apply -f /manifests/operators/30-authorino-operator.yaml
-
-echo "--- Waiting for core dependency operators to be ready..."
-wait_for_crd servicemeshcontrolplanes.maistra.io
-wait_for_crd knativeservings.operator.knative.dev
-wait_for_crd authorinos.authorino.kuadrant.io
-echo "--- ✅ Core dependency operators are ready."
+wait_for_operator authorino-operator authorino-operator
 
 
 # ===================================================================================
-# --- STEP 3: Applying NVIDIA GPU Operator (COMMENTED OUT) ---
-# This block is ready for the on-premises environment.
+# --- STEP 5: Applying NVIDIA GPU Operator (COMMENTED OUT) ---
+# This block is ready for the on-premises environment with GPUs.
 # ===================================================================================
-# echo "--- STEP 3: Applying NVIDIA GPU Operator..."
+# echo "--- STEP 5: Applying NVIDIA GPU Operator..."
 # oc apply -f /manifests/operators/20-gpu-operator.yaml
-# wait_for_crd clusterpolicies.nvidia.com
-# wait_for_deployment nvidia-gpu-operator gpu-operator
+# wait_for_operator nvidia-gpu-operator gpu-operator-certified
 #
 # echo "--- Applying GPU ClusterPolicy to begin driver installation..."
 # oc apply -f /manifests/configs/20-gpu-clusterpolicy.yaml
-#
-# echo "--- WAITING FOR NVIDIA DRIVERS TO DEPLOY (This can take over 15 minutes)..."
-# until oc get clusterpolicy/gpu-cluster-policy -o jsonpath='{.status.state}' | grep -q "ready"; do
-#   echo "Driver state is not 'ready' yet. Checking again in 30 seconds..."
-#   sleep 30
-# done
-# echo "--- ✅ NVIDIA GPU drivers are fully deployed and ready."
+# echo "--- ✅ NVIDIA GPU Operator setup is initiated. NOTE: Driver installation will be pending until GPUs are present."
 # ===================================================================================
 
 
-echo "--- STEP 4: Applying Red Hat OpenShift AI Operator..."
+echo "--- STEP 6: Applying Red Hat OpenShift AI Operator..."
 oc apply -f /manifests/operators/40-rhoai-operator.yaml
-wait_for_crd datascienceclusters.datasciencecluster.opendatahub.io
-echo "--- ✅ RHOAI Operator is ready."
+wait_for_operator redhat-ods-operator rhods-operator
 
 
-echo "--- STEP 5: Applying DataScienceCluster Resource..."
+echo "--- STEP 7: Applying DataScienceCluster Resource..."
 echo "--> Waiting for the 'redhat-ods-applications' namespace to be created by the operator..."
 until oc get ns redhat-ods-applications &> /dev/null; do
   echo "Still waiting for 'redhat-ods-applications' namespace..."
@@ -114,12 +130,12 @@ until oc get ns redhat-ods-applications &> /dev/null; do
 done
 oc apply -f /manifests/configs/30-datasciencecluster.yaml
 
-echo "--> Waiting for the DataScienceCluster 'default-dsc' to become ready (This may take several minutes)..."
+echo "--> Waiting for the DataScienceCluster 'default-dsc' to become ready (This may take up to 15 minutes)..."
 oc wait datasciencecluster default-dsc -n redhat-ods-applications --for condition=Ready --timeout=900s
 echo "--- ✅ DataScienceCluster is ready."
 
 
-echo "--- STEP 6: Applying Dashboard Customizations..."
+echo "--- STEP 8: Applying Dashboard Customizations..."
 oc patch -n redhat-ods-applications OdhDashboardConfig odh-dashboard-config --type=merge -p '{"spec":{"dashboardConfig":{"disableModelCatalog":false,"disableHardwareProfiles":false}}}'
 echo "--- ✅ Dashboard customizations applied."
 
