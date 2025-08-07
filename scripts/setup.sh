@@ -107,13 +107,13 @@ wait_for_operator authorino-operator authorino-operator
 # --- STEP 5: Applying NVIDIA GPU Operator (COMMENTED OUT) ---
 # This block is ready for the on-premises environment with GPUs.
 # ===================================================================================
-# echo "--- STEP 5: Applying NVIDIA GPU Operator..."
-# oc apply -f /manifests/operators/20-gpu-operator.yaml
-# wait_for_operator nvidia-gpu-operator gpu-operator-certified
-#
-# echo "--- Applying GPU ClusterPolicy to begin driver installation..."
-# oc apply -f /manifests/configs/20-gpu-clusterpolicy.yaml
-# echo "--- ✅ NVIDIA GPU Operator setup is initiated. NOTE: Driver installation will be pending until GPUs are present."
+echo "--- STEP 5: Applying NVIDIA GPU Operator..."
+oc apply -f /manifests/operators/20-gpu-operator.yaml
+wait_for_operator nvidia-gpu-operator gpu-operator-certified
+
+echo "--- Applying GPU ClusterPolicy to begin driver installation..."
+oc apply -f /manifests/configs/20-gpu-clusterpolicy.yaml
+echo "--- ✅ NVIDIA GPU Operator setup is initiated. NOTE: Driver installation will be pending until GPUs are present."
 # ===================================================================================
 
 
