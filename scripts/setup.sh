@@ -76,6 +76,43 @@ wait_for_operator() {
   echo "--- ✅ Operator '$subscription_name' and all its deployments are ready."
 }
 
+# A function to wait for all pods in a given namespace to reach 'Running' or 'Completed' state.
+# Usage: wait_for_pods_in_namespace <namespace> <timeout_in_seconds>
+wait_for_pods_in_namespace() {
+  local namespace=$1
+  local timeout=$2
+  local min_pods=3 # Gate 1: Wait until at least this many pods exist.
+  
+  echo "--> Gate 1: Waiting for at least $min_pods pods to exist in namespace '$namespace'..."
+  local start_time=$(date +%s)
+  until [ $(oc get pods -n "$namespace" --no-headers 2>/dev/null | wc -l) -gt $min_pods ]; do
+    local current_time=$(date +%s)
+    if (( current_time - start_time > timeout )); then
+      echo "ERROR: Timed out waiting for minimum number of pods to be created in namespace '$namespace'."
+      oc get pods -n "$namespace"
+      exit 1
+    fi
+    echo "--> Found $(oc get pods -n "$namespace" --no-headers 2>/dev/null | wc -l) pods. Waiting for more..."
+    sleep 10
+  done
+  echo "--- ✅ Gate 1 passed: Minimum pod count reached. ---"
+
+  echo "--> Gate 2: Waiting for all pods in namespace '$namespace' to be Running or Completed..."
+  start_time=$(date +%s)
+  until [ $(oc get pods -n "$namespace" --no-headers 2>/dev/null | grep -v -E "Running|Completed" | wc -l) -eq 0 ]; do
+    local current_time=$(date +%s)
+    if (( current_time - start_time > timeout )); then
+      echo "ERROR: Timed out waiting for pods in namespace '$namespace' to become ready."
+      oc get pods -n "$namespace" # Print pod status on failure
+      exit 1
+    fi
+    echo "--> Not all pods are ready yet. Checking again in 15 seconds. Current status:"
+    oc get pods -n "$namespace" --no-headers | cat
+    sleep 15
+  done
+  
+  echo "--- ✅ Gate 2 passed: All pods in namespace '$namespace' are ready."
+}
 
 # ===================================================================================
 # --- MAIN EXECUTION ---
@@ -103,18 +140,19 @@ oc apply -f /manifests/operators/30-authorino-operator.yaml
 wait_for_operator authorino-operator authorino-operator
 
 
-# ===================================================================================
-# --- STEP 5: Applying NVIDIA GPU Operator (COMMENTED OUT) ---
-# This block is ready for the on-premises environment with GPUs.
-# ===================================================================================
+
+
 echo "--- STEP 5: Applying NVIDIA GPU Operator..."
 oc apply -f /manifests/operators/20-gpu-operator.yaml
 wait_for_operator nvidia-gpu-operator gpu-operator-certified
 
 echo "--- Applying GPU ClusterPolicy to begin driver installation..."
 oc apply -f /manifests/configs/20-gpu-clusterpolicy.yaml
+
+# Wait for all driver and toolkit pods to be deployed and ready
+wait_for_pods_in_namespace nvidia-gpu-operator 1800
 echo "--- ✅ NVIDIA GPU Operator setup is initiated. NOTE: Driver installation will be pending until GPUs are present."
-# ===================================================================================
+
 
 
 echo "--- STEP 6: Applying Red Hat OpenShift AI Operator..."
