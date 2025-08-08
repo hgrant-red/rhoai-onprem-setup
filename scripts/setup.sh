@@ -180,3 +180,4 @@ echo "--- ✅ Dashboard customizations applied."
 echo ""
 echo "🚀🚀🚀 DEPLOYMENT COMPLETE 🚀🚀🚀"
 echo "Red Hat OpenShift AI has been successfully installed."
+# Enforce Unix line endings
