@@ -5,8 +5,7 @@
 set -eo pipefail
 
 # ===================================================================================
-# --- HELPER FUNCTION ---
-# ===================================================================================
+# --- HELPER FUNCTIONS ---
 
 # A robust, data-driven function to wait for an operator to install and become ready.
 # It discovers the deployment names directly from the operator's ClusterServiceVersion (CSV).
