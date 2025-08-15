@@ -21,7 +21,7 @@ wait_for_operator() {
   local start_time=$(date +%s)
   local csv_name=""
   until [[ -n "$csv_name" ]]; do
-    csv_name=$(oc get subscription "$subscription_name" -n "$namespace" -o jsonpath='{.status.installedCSV}' 2>/dev/null || echo "")
+    csv_name=$(oc get subs "$subscription_name" -n "$namespace" -o jsonpath='{.status.installedCSV}' 2>/dev/null || echo "")
     if [[ -n "$csv_name" ]]; then
       if ! oc get csv "$csv_name" -n "$namespace" &> /dev/null; then
         csv_name="" # CSV is not created yet, keep waiting
@@ -30,7 +30,7 @@ wait_for_operator() {
     local current_time=$(date +%s)
     if (( current_time - start_time > timeout )); then
       echo "ERROR: Timed out waiting for Subscription '$subscription_name' to create a CSV."
-      oc get subscription "$subscription_name" -n "$namespace" -o yaml
+      oc get subs "$subscription_name" -n "$namespace" -o yaml
       exit 1
     fi
     sleep 5

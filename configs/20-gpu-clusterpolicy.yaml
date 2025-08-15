@@ -31,6 +31,9 @@ spec:
     default: false
     enabled: false
   driver:
+    version: 550.163.01
+    repository: nvcr.io/nvidia
+    image: driver
     licensingConfig:
       configMapName: ''
       nlsEnabled: true
