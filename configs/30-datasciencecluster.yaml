@@ -22,3 +22,5 @@ spec:
       managementState: Removed
     trainingoperator:
       managementState: Removed
+    llamastackoperator:
+      managementState: Managed
